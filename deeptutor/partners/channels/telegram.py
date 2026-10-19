@@ -132,6 +132,29 @@ def _strip_md(s: str) -> str:
     return s.strip()
 
 
+def _rich_message_to_text(value: Any) -> str:
+    """Extract display text from rich blocks without including media or link metadata."""
+    if hasattr(value, "to_dict"):
+        value = value.to_dict()
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        return "".join(_rich_message_to_text(part) for part in value)
+    if not isinstance(value, dict):
+        return ""
+
+    parts = []
+    for key in ("summary", "text", "expression", "alternative_text"):
+        parts.append(_rich_message_to_text(value.get(key)))
+    for key in ("blocks", "items", "buttons"):
+        parts.extend(_rich_message_to_text(part) for part in value.get(key, []))
+    for row in value.get("cells", []):
+        parts.append("\t".join(_rich_message_to_text(cell) for cell in row))
+    for key in ("caption", "credit", "button"):
+        parts.append(_rich_message_to_text(value.get(key)))
+    return "\n".join(part for part in parts if part)
+
+
 def _render_table_box(table_lines: list[str]) -> str:
     """Convert markdown pipe-table to compact aligned text for <pre> display."""
 
@@ -559,6 +582,13 @@ class TelegramChannel(BaseChannel):
         except BadRequest as exc:
             if self._is_not_modified_error(exc):
                 return True
+            if (
+                endpoint == "editMessageText"
+                and payload.get("rich_message", {}).get("markdown")
+                and str(exc).lower() == "message text is empty"
+            ):
+                # Older APIs know editMessageText but require the legacy text field.
+                return False
             if not self._is_format_error(exc):
                 raise
             logger.debug("Telegram rejected rich formatting; using legacy formatting")
@@ -572,7 +602,8 @@ class TelegramChannel(BaseChannel):
         thread_kwargs: dict | None = None,
     ) -> None:
         """Send original Markdown as native rich content, with a legacy API fallback."""
-        if await self._try_rich(
+        if await self._call_with_retry(
+            self._try_rich,
             "sendRichMessage",
             {
                 "chat_id": chat_id,
@@ -580,6 +611,7 @@ class TelegramChannel(BaseChannel):
                 "reply_parameters": reply_params,
                 **(thread_kwargs or {}),
             },
+            retry_timeouts=False,
         ):
             return
         await self._send_legacy_text(chat_id, text, reply_params, thread_kwargs)
@@ -590,13 +622,19 @@ class TelegramChannel(BaseChannel):
         for chunk in split_message(text, TELEGRAM_MAX_MESSAGE_LEN):
             kwargs = {"chat_id": chat_id, "reply_parameters": reply_params, **(thread_kwargs or {})}
             try:
-                await self._app.bot.send_message(
-                    text=_markdown_to_telegram_html(chunk), parse_mode="HTML", **kwargs
+                await self._call_with_retry(
+                    self._app.bot.send_message,
+                    text=_markdown_to_telegram_html(chunk),
+                    parse_mode="HTML",
+                    retry_timeouts=False,
+                    **kwargs,
                 )
             except BadRequest as exc:
                 if not self._is_format_error(exc):
                     raise
-                await self._app.bot.send_message(text=chunk, **kwargs)
+                await self._call_with_retry(
+                    self._app.bot.send_message, text=chunk, retry_timeouts=False, **kwargs
+                )
 
     async def _edit_text(self, chat_id: int, message_id: int, text: str) -> None:
         if await self._call_with_retry(
@@ -606,7 +644,7 @@ class TelegramChannel(BaseChannel):
         ):
             return
         chunks = split_message(text, TELEGRAM_MAX_MESSAGE_LEN)
-        kwargs = {"chat_id": chat_id, "message_id": message_id}
+        kwargs: dict[str, Any] = {"chat_id": chat_id, "message_id": message_id}
         try:
             await self._call_with_retry(
                 self._app.bot.edit_message_text,
@@ -628,12 +666,13 @@ class TelegramChannel(BaseChannel):
         for chunk in chunks[1:]:
             await self._send_legacy_text(chat_id, chunk)
 
-    async def _call_with_retry(self, fn, *args, **kwargs):
+    async def _call_with_retry(self, fn, *args, retry_timeouts: bool = True, **kwargs):
         """Call an async Telegram API function with retry on timeout and RetryAfter.
 
         This inner retry handles Telegram-specific transient errors (flood
         control gives an explicit wait time); persistent failures still raise
-        so the channel manager's outer policy applies.
+        so the channel manager's outer policy applies. New non-idempotent
+        sends disable timeout retries because delivery may already have happened.
         """
         from telegram.error import RetryAfter
 
@@ -641,7 +680,7 @@ class TelegramChannel(BaseChannel):
             try:
                 return await fn(*args, **kwargs)
             except TimedOut:
-                if attempt == _SEND_MAX_RETRIES:
+                if not retry_timeouts or attempt == _SEND_MAX_RETRIES:
                     raise
                 delay = _SEND_RETRY_BASE_DELAY * (2 ** (attempt - 1))
                 logger.warning(
@@ -819,6 +858,11 @@ class TelegramChannel(BaseChannel):
         if not reply:
             return None
         text = getattr(reply, "text", None) or getattr(reply, "caption", None) or ""
+        if not text:
+            rich = getattr(reply, "rich_message", None) or getattr(reply, "api_kwargs", {}).get(
+                "rich_message"
+            )
+            text = _rich_message_to_text(rich)
         if len(text) > TELEGRAM_REPLY_CONTEXT_MAX_LEN:
             text = text[:TELEGRAM_REPLY_CONTEXT_MAX_LEN] + "..."
         return f"[Reply to: {text}]" if text else None
