@@ -337,6 +337,8 @@ deeptutor start    # starts backend + frontend; keep the terminal open
 
 After `deeptutor start`, open the frontend URL printed in the terminal — by default [http://127.0.0.1:3782](http://127.0.0.1:3782). Press `Ctrl+C` in that terminal to stop both backend and frontend. Skipping `deeptutor init` is fine for a quick trial; the app boots with default ports and empty model settings, configure them later in **Settings → Providers** and **Language models**.
 
+**Per-conversation reasoning effort:** For models with supported reasoning levels, use the selector next to the model picker in Chat. The override applies to subsequent turns in that conversation and is saved with the next submitted turn. Choose **Model default** to inherit the setting in **Settings → Language models** without changing the shared model default.
+
 **Browser microphone transcription:** OpenAI-compatible STT adapters forward browser audio to the provider without local conversion. The native DashScope and Volcengine STT adapters convert browser WebM/Opus to 16 kHz WAV and require an `ffmpeg` executable on DeepTutor's `PATH`. A canonical 16 kHz mono PCM WAV bypasses this conversion. For Windows PyPI installations using either native adapter, install FFmpeg, add its `bin` directory to the service's `PATH`, then restart DeepTutor. Conversion failures appear below the chat input.
 
 </details>

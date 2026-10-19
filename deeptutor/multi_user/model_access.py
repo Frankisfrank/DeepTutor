@@ -70,6 +70,8 @@ def is_owner_bound(profile: dict[str, Any]) -> bool:
 
 
 def redacted_model_access(user_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
+    from deeptutor.services.model_selection.reasoning import supported_reasoning_efforts
+
     user = get_current_user()
     if user_id is None:
         user_id = user.id
@@ -111,8 +113,10 @@ def redacted_model_access(user_id: str | None = None) -> dict[str, list[dict[str
                     "provider": effective.get("binding") or "",
                     "profile_name": effective.get("name") or profile_id,
                     "reasoning_effort": (model or {}).get("reasoning_effort"),
-                    "supported_reasoning_efforts": (model or {}).get(
-                        "codex_supported_reasoning_levels"
+                    "supported_reasoning_efforts": supported_reasoning_efforts(
+                        str(effective.get("binding") or ""),
+                        str((model or {}).get("model") or ""),
+                        metadata=model,
                     ),
                     **{
                         f"declared_{key}": value

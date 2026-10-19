@@ -29,6 +29,7 @@ class LLMSelection(BaseModel):
 
     profile_id: str
     model_id: str
+    reasoning_effort: str | None = None
 
 
 class OutgoingAttachment(BaseModel):

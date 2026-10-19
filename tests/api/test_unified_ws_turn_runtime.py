@@ -437,9 +437,11 @@ async def test_turn_runtime_persists_private_provider_response_state(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("effort", [None, "high"])
 async def test_turn_runtime_persists_llm_selection_in_turn_snapshot(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
+    effort,
 ) -> None:
     store = SQLiteSessionStore(tmp_path / "chat_history.db")
     runtime = TurnRuntimeManager(store)
@@ -504,6 +506,8 @@ async def test_turn_runtime_persists_llm_selection_in_turn_snapshot(
     monkeypatch.setattr("deeptutor.services.persona.get_persona_service", _fake_persona_service)
 
     selection = {"profile_id": "p-alt", "model_id": "m-alt"}
+    if effort is not None:
+        selection["reasoning_effort"] = effort
     session, turn = await runtime.start_turn(
         {
             "type": "start_turn",

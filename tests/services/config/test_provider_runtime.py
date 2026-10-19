@@ -864,8 +864,8 @@ def test_llm_reasoning_effort_resolves_from_catalog() -> None:
             "models": [
                 {
                     "id": "llm-m",
-                    "name": "GPT 4o mini",
-                    "model": "gpt-4o-mini",
+                    "name": "GPT Sol",
+                    "model": "gpt-5.6-sol",
                     "reasoning_effort": "high",
                 }
             ],
@@ -900,6 +900,7 @@ def test_llm_selection_reasoning_effort_overrides_catalog_default() -> None:
         llm_selection={"profile_id": "llm-p", "model_id": "llm-m", "reasoning_effort": "low"},
     )
     assert resolved.reasoning_effort == "low"
+    assert catalog["services"]["llm"]["profiles"][0]["models"][0]["reasoning_effort"] == "high"
 
 
 def test_llm_selection_without_reasoning_effort_keeps_catalog_default() -> None:
@@ -931,11 +932,51 @@ def test_llm_selection_without_reasoning_effort_keeps_catalog_default() -> None:
 
 def test_llm_selection_reasoning_effort_applies_even_without_catalog_default() -> None:
     catalog = _build_catalog()
+    catalog["services"]["llm"]["profiles"][0]["models"][0]["model"] = "gpt-5.6-sol"
     resolved = resolve_llm_runtime_config(
         catalog=catalog,
         llm_selection={"profile_id": "llm-p", "model_id": "llm-m", "reasoning_effort": "xhigh"},
     )
     assert resolved.reasoning_effort == "xhigh"
+
+
+def test_llm_selection_ultra_is_scoped_to_the_conversation() -> None:
+    catalog = _build_catalog()
+    profile = catalog["services"]["llm"]["profiles"][0]
+    profile["binding"] = "openai_codex"
+    model = profile["models"][0]
+    model.update(
+        model="gpt-6.1-sol",
+        reasoning_effort="high",
+        codex_supported_reasoning_levels=["low", "high", "ultra"],
+    )
+    overridden = resolve_llm_runtime_config(
+        catalog=catalog,
+        llm_selection={"profile_id": "llm-p", "model_id": "llm-m", "reasoning_effort": "ultra"},
+    )
+    inherited = resolve_llm_runtime_config(
+        catalog=catalog, llm_selection={"profile_id": "llm-p", "model_id": "llm-m"}
+    )
+    assert overridden.reasoning_effort == "ultra"
+    assert inherited.reasoning_effort == "high"
+    assert model["reasoning_effort"] == "high"
+
+
+def test_custom_gateway_preserves_override_outside_inferred_menu() -> None:
+    catalog = _build_catalog()
+    profile = catalog["services"]["llm"]["profiles"][0]
+    profile["binding"] = "custom"
+    model = profile["models"][0]
+    model["model"] = "gateway/reasoner"
+    model["reasoning_effort"] = "high"
+
+    resolved = resolve_llm_runtime_config(
+        catalog=catalog,
+        llm_selection={"profile_id": "llm-p", "model_id": "llm-m", "reasoning_effort": "xhigh"},
+    )
+
+    assert resolved.reasoning_effort == "xhigh"
+    assert model["reasoning_effort"] == "high"
 
 
 def test_search_fallback_to_duckduckgo_without_key() -> None:

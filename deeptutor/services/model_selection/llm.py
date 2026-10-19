@@ -24,6 +24,8 @@ VALID_REASONING_EFFORTS: tuple[str, ...] = (
     "high",
     "xhigh",
     "max",
+    "ultra",
+    "adaptive",
 )
 
 
@@ -94,6 +96,8 @@ def _llm_service(catalog: dict[str, Any]) -> dict[str, Any]:
 
 def list_llm_options(catalog: dict[str, Any]) -> dict[str, Any]:
     """Return a redacted list of configured chat-selectable LLM models."""
+    from .reasoning import supported_reasoning_efforts
+
     service = _llm_service(catalog)
     active_profile_id = str(service.get("active_profile_id") or "")
     active_model_id = str(service.get("active_model_id") or "")
@@ -147,11 +151,9 @@ def list_llm_options(catalog: dict[str, Any]) -> dict[str, Any]:
             reasoning_effort = str(model.get("reasoning_effort") or "").strip().lower()
             if reasoning_effort:
                 option["reasoning_effort"] = reasoning_effort
-            supported_levels = model.get("codex_supported_reasoning_levels")
-            if isinstance(supported_levels, list):
-                option["supported_reasoning_efforts"] = [
-                    str(level).strip().lower() for level in supported_levels if str(level).strip()
-                ]
+            option["supported_reasoning_efforts"] = supported_reasoning_efforts(
+                model_provider, model_value, metadata=model
+            )
             declared = model.get("capabilities") or {}
             for capability in ("reasoning", "vision"):
                 if type(declared.get(capability)) is bool:
@@ -182,6 +184,28 @@ def apply_llm_selection_to_catalog(
             continue
         for model in profile.get("models", []) or []:
             if isinstance(model, dict) and model.get("id") == resolved.model_id:
+                if resolved.reasoning_effort:
+                    from deeptutor.services.config.provider_links import resolve_profile_provider
+
+                    from .reasoning import supported_reasoning_efforts
+
+                    effective = resolve_profile_provider(selected, "llm", profile, model)
+                    supported = supported_reasoning_efforts(
+                        str(effective.get("binding") or profile.get("binding") or ""),
+                        str(model.get("model") or ""),
+                        metadata=model,
+                    )
+                    # Inferred menu choices are advisory, especially for custom
+                    # gateways. Restrict legacy overrides only on explicit metadata.
+                    support_is_known = (
+                        isinstance(model.get("codex_supported_reasoning_levels"), list)
+                        or (model.get("capabilities") or {}).get("reasoning") is False
+                    )
+                    if support_is_known and resolved.reasoning_effort not in supported:
+                        raise ValueError(
+                            "Invalid LLM selection: reasoning_effort "
+                            f"{resolved.reasoning_effort!r} is not supported by the selected model."
+                        )
                 service["active_profile_id"] = resolved.profile_id
                 service["active_model_id"] = resolved.model_id
                 return selected

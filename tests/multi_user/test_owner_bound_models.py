@@ -104,6 +104,14 @@ def test_ordinary_shared_profiles_stay_grantable(tmp_path, monkeypatch):
         option = model_access.allowed_llm_options()["options"][0]
         assert option["provider"] == "openai"
         assert option["reasoning_effort"] == "high"
+        assert option["supported_reasoning_efforts"] == [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ]
         assert option["is_active_default"] is True
         assert model_access.allowed_llm_options()["active"] == {
             "profile_id": CODEX_PROFILE,
